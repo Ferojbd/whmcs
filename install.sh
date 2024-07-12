@@ -1,63 +1,119 @@
 #!/bin/bash
 
-# Update system packages
-sudo dnf update -y
+# WHMCS setup script with LEMP, MariaDB, Let's Encrypt (optional)
+# Usage: bash setup_whmcs.sh
 
-# Install Apache web server
-sudo dnf install httpd -y
+# Log file
+LOG_FILE="whmcs_setup_log.txt"
 
-# Start and enable Apache
-sudo systemctl start httpd
-sudo systemctl enable httpd
+# Function to log messages to the log file
+log_message() {
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - $1" >> "${LOG_FILE}"
+}
 
-# Install PHP 8.1 and required extensions
-sudo dnf module enable php:remi-8.1 -y
-sudo dnf install php php-cli php-fpm php-mysqlnd php-zip php-devel php-gd php-mbstring php-curl php-xml php-pear php-bcmath php-json php-iconv -y
+# Configuration
+WHMCS_INSTALL_DIR="/home/myitpolly/public_html/"   # Update this to your preferred installation directory
+DB_USER="myitpolly_billing"        # Replace with your database username
+DB_PASS="sC$_6kh=Dy}E"    # Replace with your database password
+DB_NAME="myitpolly_billing"            # Replace with your database name
+DB_HOST="localhost"                 # Replace with your database host
+DOMAIN="my.itpolly.com"            # Replace with your domain name
 
-# Check PHP version and modules
-php -v
-php -m | grep ioncube  # Ensure ionCube loader is installed
+# Inform the user about manual WHMCS download
+echo "Before running the script, please ensure you have manually downloaded the 'whmcs.zip' file from the official WHMCS website."
+echo "Place the 'whmcs.zip' file in the same directory as this script."
 
-# Install ionCube Loader (if not installed already)
-# Follow installation instructions from ionCube's website: https://www.ioncube.com/loaders.php
+# Ask the user to confirm the presence of the 'whmcs.zip' file
+read -p "Have you placed the 'whmcs.zip' file in the same directory as this script? (y/n): " confirm_download
 
-# Download and extract WHMCS
-sudo dnf install wget unzip -y
-wget https://releases.whmcs.com/v2/pkgs/whmcs-8.10.1-release.1.zip
-unzip whmcs-8.10.1-release.1.zip -d /home/api/my.itpolly.com
+if [[ "${confirm_download}" != "y" && "${confirm_download}" != "Y" ]]; then
+    echo "Please download the 'whmcs.zip' file and place it in the same directory as this script before running the setup."
+    exit 1
+fi
 
-# Set permissions for WHMCS
-sudo chown -R apache:apache /home/api/my.itpolly.com
-sudo chmod -R 755 /home/api/my.itpolly.com
+# Step 1: Configure permissions
+log_message "Step 1: Configuring permissions..."
+chown -R www-data:www-data "${WHMCS_INSTALL_DIR}"
+chmod -R 755 "${WHMCS_INSTALL_DIR}/templates_c"
+chmod 644 "${WHMCS_INSTALL_DIR}/configuration.php"
 
-# Configure Apache virtual host for my.itpolly.com
-sudo tee /etc/httpd/conf.d/my.itpolly.com.conf > /dev/null <<EOF
-<VirtualHost *:80>
-    ServerAdmin webmaster@my.itpolly.com
-    ServerName my.itpolly.com
-    DocumentRoot /home/api/my.itpolly.com
+# Step 2: Install LEMP (Linux, Nginx, PHP)
+log_message "Step 2: Installing LEMP..."
+apt update
+apt install -y nginx php-fpm php-mysql
 
-    <Directory /home/api/my.itpolly.com>
-        Options Indexes FollowSymLinks
-        AllowOverride All
-        Require all granted
-    </Directory>
+# Step 3: Install MariaDB
+log_message "Step 3: Installing MariaDB..."
+apt install -y mariadb-server
 
-    ErrorLog /var/log/httpd/my.itpolly.com-error.log
-    CustomLog /var/log/httpd/my.itpolly.com-access.log combined
-</VirtualHost>
+# Step 4: Secure MariaDB installation
+log_message "Step 4: Securing MariaDB installation..."
+mysql_secure_installation
+
+# Step 5: Configure Nginx
+log_message "Step 5: Configuring Nginx..."
+cat > /etc/nginx/sites-available/myitpolly << EOF
+server {
+    listen 80;
+    server_name ${DOMAIN} www.${DOMAIN};
+
+    root ${WHMCS_INSTALL_DIR};
+    index index.php;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.1-fpm.sock; # Update the PHP version if needed
+    }
+}
 EOF
 
-# Restart Apache to apply changes
-sudo systemctl restart httpd
+ln -s /etc/nginx/sites-available/whmcs /etc/nginx/sites-enabled/
+nginx -t
+systemctl restart nginx
 
-# Install Certbot for Let's Encrypt (optional)
-sudo dnf install certbot python3-certbot-apache -y
+# Step 6: Setup Let's Encrypt SSL (optional)
+log_message "Step 6: Setting up Let's Encrypt SSL (optional)..."
+read -p "Do you want to enable SSL with Let's Encrypt? (y/n): " enable_ssl
 
-# Obtain SSL certificate for my.itpolly.com (if Certbot is installed)
-sudo certbot --apache -d my.itpolly.com
+if [[ "${enable_ssl}" == "y" || "${enable_ssl}" == "Y" ]]; then
+    apt install -y certbot python3-certbot-nginx
+    certbot --nginx -d ${DOMAIN} -d www.${DOMAIN}
 
-# Cleanup
-rm -rf whmcs-8.10.1-release.1.zip
+    # Step 7: Restart Nginx with SSL
+    log_message "Step 7: Restarting Nginx with SSL..."
+    nginx -t
+    systemctl restart nginx
+else
+    log_message "SSL setup skipped."
+fi
 
-echo "Installation completed successfully."
+if [[ "${enable_ssl}" == "y" || "${enable_ssl}" == "Y" ]]; then
+    # Step 8: Create database and user
+    log_message "Step 8: Creating database and user..."
+    mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};"
+    mysql -u root -p -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'${DB_HOST}' IDENTIFIED BY '${DB_PASS}';"
+    mysql -u root -p -e "FLUSH PRIVILEGES;"
+
+    # Step 9: Setup configuration file
+    log_message "Step 9: Configuring WHMCS..."
+    cp "${WHMCS_INSTALL_DIR}/configuration.php.new" "${WHMCS_INSTALL_DIR}/configuration.php"
+    sed -i "s/^\$db_username = 'db_username';/\$db_username = '${DB_USER}';/" "${WHMCS_INSTALL_DIR}/configuration.php"
+    sed -i "s/^\$db_password = 'db_password';/\$db_password = '${DB_PASS}';/" "${WHMCS_INSTALL_DIR}/configuration.php"
+    sed -i "s/^\$db_name = 'db_name';/\$db_name = '${DB_NAME}';/" "${WHMCS_INSTALL_DIR}/configuration.php"
+
+    # Step 10: Install WHMCS
+    log_message "Step 10: Installing WHMCS..."
+    php "${WHMCS_INSTALL_DIR}/install/install.php"
+
+    # Step 11: Cleanup
+    log_message "Step 11: Cleaning up..."
+    rm -rf "${WHMCS_INSTALL_DIR}/install"
+
+    log_message "WHMCS setup completed successfully!"
+else
+    log_message "WHMCS setup completed without SSL configuration."
+fi
