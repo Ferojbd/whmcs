@@ -42,16 +42,8 @@ log_message "Step 2: Installing LEMP..."
 apt update
 apt install -y nginx php-fpm php-mysql
 
-# Step 3: Install MariaDB
-log_message "Step 3: Installing MariaDB..."
-apt install -y mariadb-server
-
-# Step 4: Secure MariaDB installation
-log_message "Step 4: Securing MariaDB installation..."
-mysql_secure_installation
-
-# Step 5: Configure Nginx
-log_message "Step 5: Configuring Nginx..."
+# Step 3: Configure Nginx
+log_message "Step 3: Configuring Nginx..."
 cat > /etc/nginx/sites-available/myitpolly << EOF
 server {
     listen 80;
@@ -75,16 +67,16 @@ ln -s /etc/nginx/sites-available/whmcs /etc/nginx/sites-enabled/
 nginx -t
 systemctl restart nginx
 
-# Step 6: Setup Let's Encrypt SSL (optional)
-log_message "Step 6: Setting up Let's Encrypt SSL (optional)..."
+# Step 4: Setup Let's Encrypt SSL (optional)
+log_message "Step 4: Setting up Let's Encrypt SSL (optional)..."
 read -p "Do you want to enable SSL with Let's Encrypt? (y/n): " enable_ssl
 
 if [[ "${enable_ssl}" == "y" || "${enable_ssl}" == "Y" ]]; then
     apt install -y certbot python3-certbot-nginx
     certbot --nginx -d ${DOMAIN} -d www.${DOMAIN}
 
-    # Step 7: Restart Nginx with SSL
-    log_message "Step 7: Restarting Nginx with SSL..."
+    # Step 5: Restart Nginx with SSL
+    log_message "Step 5: Restarting Nginx with SSL..."
     nginx -t
     systemctl restart nginx
 else
@@ -92,25 +84,25 @@ else
 fi
 
 if [[ "${enable_ssl}" == "y" || "${enable_ssl}" == "Y" ]]; then
-    # Step 8: Create database and user
-    log_message "Step 8: Creating database and user..."
+    # Step 6: Create database and user
+    log_message "Step 6: Creating database and user..."
     mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};"
     mysql -u root -p -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'${DB_HOST}' IDENTIFIED BY '${DB_PASS}';"
     mysql -u root -p -e "FLUSH PRIVILEGES;"
 
-    # Step 9: Setup configuration file
-    log_message "Step 9: Configuring WHMCS..."
+    # Step 7: Setup configuration file
+    log_message "Step 7: Configuring WHMCS..."
     cp "${WHMCS_INSTALL_DIR}/configuration.php.new" "${WHMCS_INSTALL_DIR}/configuration.php"
     sed -i "s/^\$db_username = 'db_username';/\$db_username = '${DB_USER}';/" "${WHMCS_INSTALL_DIR}/configuration.php"
     sed -i "s/^\$db_password = 'db_password';/\$db_password = '${DB_PASS}';/" "${WHMCS_INSTALL_DIR}/configuration.php"
     sed -i "s/^\$db_name = 'db_name';/\$db_name = '${DB_NAME}';/" "${WHMCS_INSTALL_DIR}/configuration.php"
 
-    # Step 10: Install WHMCS
-    log_message "Step 10: Installing WHMCS..."
+    # Step 8: Install WHMCS
+    log_message "Step 8: Installing WHMCS..."
     php "${WHMCS_INSTALL_DIR}/install/install.php"
 
-    # Step 11: Cleanup
-    log_message "Step 11: Cleaning up..."
+    # Step 9: Cleanup
+    log_message "Step 9: Cleaning up..."
     rm -rf "${WHMCS_INSTALL_DIR}/install"
 
     log_message "WHMCS setup completed successfully!"
